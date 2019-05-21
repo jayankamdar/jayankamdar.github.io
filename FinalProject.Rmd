@@ -1,0 +1,209 @@
+---
+title: "Final Project"
+author: "Rossen Gurov, Jayan Kamdar and Ryan Lee"
+date: "May 18, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(gapminder)
+library(ggplot2)
+library(dplyr)
+library(magrittr)
+library(readr)
+library(rvest)
+library(broom)
+data(gapminder)
+
+gapminder
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Introduction
+In this tutorial, we will be using an existing data set of Spotify songs in order to navigate the data science pipeline. Beginning with the curation, parsing and management of the data, we will then create visualizations as part of an exploratory data analysis. This will allow us to create and test machine-learning hypotheses about song popularity, with the ultimate goal of identifying and defining a relationship between popularity and some other auditory characteristics (ex. acousticness, danceability, loudness, tempo, etc.).
+
+## Step 1 - Curation, Parsing & Management
+The first step in the data science pipeline is to identify and gather the data that we want to work with. In general, once you know what kind of data you'd like to work with, there are two good ways to retrieve it; first, you should check online data repositories, like https://www.kaggle.com/, to see if the data you're looking for has already been neatly compiled into a data set. If not, the other way to retrieve data would be scraping it from a raw source; for example, instead of finding an existing data set pertaining to rocket launches, you could simply scrape the data from https://www.nasa.gov/launchschedule/. For our purposes of looking at Spotify songs, we were able to find an existing dataset that contains over 200,000 listed tracks, with columns for different auditory features like tempo or loudness. You can view the dataset or download it for yourself from this Kaggle page:
+
+https://www.kaggle.com/zaheenhamidani/ultimate-spotify-tracks-db 
+
+The first thing we should do is peek at some of the entries, to get a feel for how the data is formatted and whether we need to do any additional clean-up or management. The following code uses the Tidyverse library to load the database into a dataframe, and then we sort by popularity in order to peek at the top 10 most popular songs.
+
+
+```{r load_data, message=FALSE}
+library(tidyverse)
+url <- "D:\\Users\\jayan\\Documents\\CMSC320\\ultimate-spotify-tracks-db\\SpotifyFeatures.csv"
+song_tab <- as.data.frame(read_csv(url))
+
+top_10 <- song_tab %>% 
+  arrange(desc(popularity))%>%
+  slice(1:10)
+
+top_10
+```
+
+The data is formatted nicely, but we can see some duplicate entries here due to songs having multiple genres; for example, 7 Rings is listed twice, once for Pop and once for Dance. This is where data tidying comes into play: in addition to removing these duplicates, we also should get rid of the 'Genre' column because it won't be used in this analysis. The following code performs this and leaves us with a tidied version of the original database.
+
+```{r tidying, message=FALSE}
+db <- song_tab %>%
+  subset(select = -c(genre)) %>%
+  distinct(track_name, artist_name, .keep_all=TRUE)
+
+top_10_tidied <- db %>% 
+  arrange(desc(popularity))%>%
+  slice(1:10)
+
+top_10_tidied
+```
+
+There are many other instances where you might need to tidy data; for example, you may want to rename a column or merge two separate tables. You can consult the following link to learn more about data wrangling and the different times it may be needed:
+https://www.rstudio.com/wp-content/uploads/2015/02/data-wrangling-cheatsheet.pdf
+
+## Step 2 - Exploratory Data Analysis
+There are a number of factors we can plot versus popularity to evaluate a potential relationship. You can read more about them here:
+
+https://developer.spotify.com/documentation/web-api/reference/tracks/get-audio-features/
+
+For this tutorial, we will first look at "danceability," defined by Spotify as "how suitable a track is for dancing" based on "tempo, rhythm stability, beat strength, and overall regularity." Using a scatter plot with a line of best fit, we can take an exploratory look at their relationship. The following code uses the ggplot library to plot song popularity versus danceability.
+
+```{r scatterplot, message=FALSE}
+db %>%
+  ggplot(aes(x=danceability, y=popularity)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  labs(title="Song Danceability vs. Popularity",
+       y = "Popularity",
+       x = "Danceability")
+```
+
+The LM line suggests a positive relationship between danceability and popularity, but the scatter plot itself is pretty dense - another way we can visually explore this relationship is with a violin plot. After cutting danceability into equal segments (ex. 0 to 0.09, 0.1 to 0.19, 0.2 to 0.29, etc.), we can create a "violin" for each segment, where the distribution of popularity for each segment of danceability is expressed by the shape of the violin. The following code uses the cut() function to create a column of segmented danceability, then ggplot() to create the violin plot.
+
+
+```{r violinplot, message=FALSE}
+db$danc_pop <- cut (db$danceability,
+                   breaks = c(0, 0.09, .19, .29, .39, .49, .59 ,.69, .79, .89, 1),
+                   include.lowest = TRUE)
+
+db %>%
+  ggplot(aes(x=danc_pop, y=popularity)) +
+  geom_violin() +
+  labs(title="Song Danceability vs. Popularity",
+       y = "Popularity",
+       x = "Danceability")
+```
+
+From this plot, we can note that the least danceable songs (less than 0.19) are generally distributed around low popularities, while the more danceable songs are much more evenly distributed. It certainly seems like a song's danceability can impact its popularity - to further verify this relationship, we can move into hypothesis testing & machine learning.
+
+## Step 3 - Hypothesis Testing & Analysis
+
+Hypothesis testing is a general process with four primary steps, including formulating the null hypothesis, identifying a test statistic, computing a p-value and comparing it to an acceptable significance value. For more information on this process, visit the following link:
+
+http://mathworld.wolfram.com/HypothesisTesting.html
+
+Identifying a relationship between variables involves rejecting the null hypothesis of no relationship. For our purposes, this means rejecting that no relationship exists between song popularity & danceability. To do this, we will fit a linear regression model for popularity vs. danceability; the resulting model will have a p-value, which is the probability of this data existing when the null hypothesis is true. If this probability is less than 5%, an acceptable significance value, we can be reasonably confident that the data is evidence against the null hypothesis, and reject it.
+
+
+```{r pop_dance_lm, message=FALSE}
+dance_fit <- lm(popularity ~ danceability, data=db)
+dance_stats <- tidy(dance_fit)
+
+dance_stats
+```
+
+The model returns a p-value of 0, which is certainly possible due to the large sample size, but a little suspicious nonetheless; what if R simply isn't calculating it correctly? To verify this, we can take a smaller sample of the data and fit a model on that; since the sample size is a lot smaller, we cannot be as confident in supporting or refuting the null hypothesis, so if the p-value is still 0, we know that it isn't being calculated correctly.
+
+```{r pop_dance_lm_sample, message=FALSE}
+db_sample <- sample_n(db, 1000)
+dance_fit_sample <- lm(popularity ~ danceability, data=db_sample)
+dance_stats_sample <- tidy(dance_fit_sample)
+
+dance_stats_sample
+```
+Now we have a p-value that isn't 0, so we can be confident that the 0 we originally got was the actual p-value, and not just some default return value. With this in mind, the p-value of 0 is much smaller than our critical threshold of 0.05, so we can confidently reject the null hypothesis of no relationship existing between a song's danceability and popularity.
+
+Can we do better? Our current model checks one factor, danceability, versus popularity; what if we were to add another? Intuitively, we think that a song's energy, which is composed of its "dynamic range, perceived loudness, timbre, onset rate, and general entropy," might also impact popularity if people prefer music with higher energy. To check this, we'll repeat the exploratory steps we performed for danceability; if they suggest a similar relationship existence, we can move on to fitting a linear regression model.
+
+```{r violinplot_energy, message=FALSE}
+db$ener_cat <- cut (db$energy,
+                   breaks = c(0, 0.09, .19, .29, .39, .49, .59 ,.69, .79, .89, 1),
+                   include.lowest = TRUE)
+
+db %>%
+  ggplot(aes(x=ener_cat, y=popularity)) +
+  geom_violin() +
+  labs(title="Song Energy vs. Popularity",
+       y = "Popularity",
+       x = "Energy")
+```
+
+Similarly to danceability, it seems that songs with low energy are more concentrated around lower popularities, while songs with higher energy are more evenly distributed. Now we can fit a linear regression model and check the p-value:
+
+```{r pop_ener_lm, message=FALSE}
+ener_fit <- lm(popularity ~ energy, data=db)
+ener_stats <- tidy(ener_fit)
+
+ener_stats
+```
+
+Again, the p-value is much lower than 0.05, so we can reject the null hypothesis that no relationship exists between a song's energy and its popularity. Now we'd like to check a linear regression fit with *both* of these factors as interaction terms, rather than just one or the other; the following code fits a linear regression model with these interactions.
+
+```{r pop_enerdance_lm, message=FALSE}
+enerdance_fit <- lm(popularity ~ danceability * energy, db)
+enerdance_stats <- tidy(enerdance_fit)
+enerdance_stats
+```
+
+After fitting this model, we now have three models: one with danceability, one with energy, and one with both. To determine which one best predicts popularity, we can plot each of the three model's augmented residual values versus fitted values. The model that best predicts popularity will be the one whose residuals are most centered around 0, so we will also add a line of best fit to each plot.
+
+```{r dance_resid, message=FALSE}
+aug_dance <- dance_fit %>% augment()
+aug_dance %>% 
+    ggplot(aes(x=.fitted, y=.resid)) +
+      geom_point() +
+      geom_smooth(method = "lm") +
+      labs(title="Danceability - fitted values vs. residual values",
+           x = "fitted",
+           y = "residual")
+```
+
+```{r ener_resid, message=FALSE}
+aug_ener <- ener_fit %>% augment()
+aug_ener %>% 
+    ggplot(aes(x=.fitted, y=.resid)) +
+      geom_point() +
+      geom_smooth(method = "lm") +
+      labs(title="Energy - fitted values vs. residual values",
+           x = "fitted",
+           y = "residual")
+```
+
+```{r enerdance_resid, message=FALSE}
+aug_enerdance <- enerdance_fit %>% augment()
+aug_enerdance %>% 
+    ggplot(aes(x=.fitted, y=.resid)) +
+      geom_point() +
+      geom_smooth(method = "lm") +
+      labs(title="Energy & dance - fitted values vs. residual values",
+           x = "fitted",
+           y = "residual")
+```
+
+Unfortunately, just based on these plots, it seems difficult to determine which of these models is the best, because all three have residuals which seem very centered around 0. But we can also perform a statistical analysis with the anova() function; after passing each of the fitted models as an argument, it will return a table of useful information; for our purposes we want to consider the residual sum of squares, because the best model will be the one which most minimizes the RSS.
+
+```{r fvals, message=FALSE}
+anova(dance_fit, ener_fit, enerdance_fit)
+```
+
+This table states that model 3, the model with both danceability *and* energy, has the lowest RSS, which would make it the model that best predicts popularity out of the three we have considered. 
+
+## Conclusion
+In summary, we have explored each step in the data science pipeline by analyzing Spotify songs; in particular we looked at how to create a model for popularity, considering whether we should use danceability, energy, or both as predictors. You should now have a better understanding of how to do the following:
+
+1) Gather and look at a dataset
+2) Tidy data (knowing both how, and when, it is needed)
+3) Use R and ggplot to visualize data with plots
+4) Perform hypothesis testing to reject null hypotheses
+5) Fit linear regression models onto data with one or more predictors
+6) Compare different models visually with residual plots
+7) compare different models statistically with RSS values
+
+Thank you for reading our tutorial - we hope you enjoyed it, and we hope to see it inspire many analyses like ours!
